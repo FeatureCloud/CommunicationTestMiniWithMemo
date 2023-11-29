@@ -82,7 +82,7 @@ class AggState(AppState):
         if awaitdatasmpc == sum([STARMEMOAWAITSMPC for _ in range(len(self.clients))]):
             print(f"passed ({awaitdatasmpc})")
         else:
-            print(f"failed ({awaitdatasmpc})")
+            print(f"failed ({awaitdatasmpc}, should be {STARMEMOAWAITSMPC*len(self.clients)})")
         # await dp
         awaitdatadp = self.await_data(n=len(self.clients), use_dp=True, memo="STARMEMOAWAITDP")
         print("test awaitDP: ", end="")
@@ -90,7 +90,7 @@ class AggState(AppState):
         # await dp + smpc
         awaitsmpcdp = self.await_data(use_smpc=True, use_dp=True, memo="STARMEMOAWAITSMPCDP")
         print("test awaitSMPCDP: ", end="")
-        print(f"got ({awaitsmpcdp}), expected noised and aggregated ({STARMEMOAWAITSMPCDP})")
+        print(f"got ({awaitsmpcdp}), expected noised ({STARMEMOAWAITSMPCDP*len(self.clients)})")
         # broadcast data
         self.broadcast_data(BROADCASTDATA, send_to_self=False, memo="BROADCASTDATA")
 
