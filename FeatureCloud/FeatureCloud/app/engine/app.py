@@ -134,8 +134,6 @@ class App:
     current_state: AppState
     last_send_status: str (JSON)
 
-    DEBUG: bool
-
     Methods
     -------
     handle_setup(client_id, coordinator, clients)
@@ -159,13 +157,13 @@ class App:
         self.thread: Union[threading.Thread, None] = None
         self.send_counter: int = 0 
         self.receive_counter: int = 0
-            # this is automatically increment for every call of 
-            # AppState.send_data_to_coordinator() call. 
-            # this counter is then used as memo if no memo is given
-            # => THIS MEANS THAT THE COORDINATOR MUST CALL 
-            # self.send_data_to_coordinator() OR IT'S COUNTER IS DESYNCED
-            # WITH THE CLIENTS! This is also necessary for e.g. gather_data to
-            # work.
+            # the send counter is increased with any send_data_to_coordinator
+            # call while the receive counter is increased with any
+            # aggregate_data and gather_data call as well as with
+            # await_data with n=#clients OR n=#clients-1 OR n=1 and smpc=True
+            # This should work in 99% of all cases, except when
+            # somebody uses send_data_to_participant from each client and then
+            # uses await_data on all these #clients -1 data pieces.
         self.data_incoming = {}
             # dictionary mapping memo: [(data, client),...]
             # data is the data serialized with JSON when SMPC or DP is used, 
@@ -204,7 +202,6 @@ class App:
         self.status_memo: Union[str, None] = None
 
         self.last_send_status = self.get_current_status()
-        self.DEBUG: bool = True
         
         # Add terminal state
         @app_state('terminal', Role.BOTH, self)
@@ -271,6 +268,7 @@ class App:
             self.log(f'transition: {transition}')
             self.transition(f'{self.current_state.name}_{transition}')
             if self.current_state.name == 'terminal':
+                sleep(TERMINAL_WAIT) 
                 terminal_status_added = False
                 while True:
                     if not terminal_status_added:
@@ -281,15 +279,22 @@ class App:
                         self.data_outgoing.append((None, status)) 
                             # only append to ensure that all data in the pipe is still
                             # sent out
+                        terminal_status_added = True
                         sleep(TERMINAL_WAIT) 
                             # potentially this wait time clears the queue already
                     if len(self.data_outgoing) > 1:
                         # there is still data to be sent out
                         self.log(f'done, waiting for the last {len(self.data_outgoing)-1} data pieces to be send')
+                    elif len(self.data_outgoing) == 1:
                         sleep(TERMINAL_WAIT) 
-                    elif len(self.data_outgoing) == 0:
+                            # the last status that was added before is never
+                            # removed, so we finnish when only one status is 
+                            # left
+                            # To ensure that this last status has been pulled,
+                            # we just wait 
                         self.log('done')
                         return 
+                    sleep(TRANSITION_WAIT)
             sleep(TRANSITION_WAIT)
 
     def register(self):
@@ -333,11 +338,6 @@ class App:
             self.data_incoming[memo] = [(data, client)]
         else:
             self.data_incoming[memo].append((data, client))
-        if self.DEBUG:
-            print(f"RECEIVED DATA: ", end="")
-            for k, v in self.data_incoming.items():
-                print(f"{k}: {[client for _, client in v]}, ", end="")
-            print()
 
     def handle_status(self):
         """ This informs if there is any data to be sent as well as the way
@@ -379,14 +379,7 @@ class App:
             raise Exception("Race condition error, the controller got sent a" +
                 "different GET/status object that the one intended with this data object."+
                 "Needed status object: {}, actual status object: {}".format(
-                json.dumps(status, sort_keys=True), 
-                json.dumps(self.last_send_status, sort_keys=True)))
-        
-        if self.DEBUG:
-            print("Sending out the following data")
-            print(data)
-            print("with the following status")
-            print(status)
+                status, self.last_send_status))
 
         # status is fine, send data out
         return data
@@ -609,7 +602,7 @@ class AppState(abc.ABC):
             if True, will assume that data was sent and modified with the
             controllers differential privacy capacities (with use_dp=true in the
             corresponding send function). This must be set in the receiving 
-            function due to serialization differenfes with DP
+            function due to serialization differences with DP
         memo : str or None, default=None
             the string identifying a specific communication round. 
             Any app should ensure that this string is the same over all clients
@@ -650,7 +643,7 @@ class AppState(abc.ABC):
             if True, will assume that data was sent and modified with the
             controllers differential privacy capacities (with use_dp=true in the
             corresponding send function). This must be set in the receiving 
-            function due to serialization differenfes with DP
+            function due to serialization differences with DP
         memo : str or None, default=None
             the string identifying a specific communication round. 
             Any app should ensure that this string is the same over all clients
@@ -697,16 +690,17 @@ class AppState(abc.ABC):
             if True, will assume that data was sent and modified with the
             controllers differential privacy capacities (with use_dp=true in the
             corresponding send function). This must be set in the receiving 
-            function due to serialization differenfes with DP
+            function due to serialization differences with DP
         use_smpc: bool, default=False
             if True, will ensure that n is set to 1 and the correct 
             serialization is used (SMPC uses JSON serialization)
         memo : str or None, default=None
+            RECOMMENDED TO BE SET FOR THIS METHOD!
             the string identifying a specific communication round. 
             Any app should ensure that this string is the same over all clients
             over the same communication round and that a different string is 
             used for each communication round. This ensures that no race 
-            condition problems occur
+            condition problems occur.
         Returns
         -------
         list of data pieces (if n > 1 or unwrap = False) or a single data piece (if n = 1 and unwrap = True)
@@ -737,12 +731,6 @@ class AppState(abc.ABC):
                 LogLevel.Error)
 
         while True:
-            if self._app.DEBUG:
-                print(f"WAITING FOR {n} data pieces with is_json={is_json}, smpc={use_smpc}, dp={use_dp}, memo={memo}")
-                print("CURRENT INCOMING: ", end="")
-                for k, v in self._app.data_incoming.items():
-                    print(f"{k}: {[client for _, client in v]}, ", end="")
-                print()
             num_data_pieces = 0
             if memo in self._app.data_incoming:
                 num_data_pieces = len(self._app.data_incoming[memo])

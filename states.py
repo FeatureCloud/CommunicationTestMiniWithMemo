@@ -3,40 +3,36 @@ import random
 import numpy as np
 import json
 
-# FeatureCloud requires that apps define the at least the 'initial' state.
-# This state is executed after the app instance is started.
-# should test:
-# gather:
-#   nomemo, memo:
-#       sendCoordinator + await, gather, agg
-# p2p:
-#   memo, nomemo
+# This app does a random order of random communication methods in featurecloud
+# and tests if the communication method worked
+# The tests are generated randomly with the following variables:
+# DATATYPES = ["string", 1, 1.0, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0]] 
+# COM_METHODS = ["p2p", "gather"]
+# SEND_METHOD = ["broadcast", "send_to_coord"] 
+# AGG_METHOD = ["aggregate", "await", "gather"] 
+# SMPC = True/False
+# DP = True/False
+# memo = None/generated
+# the send method describes whether the send_data_to_participant (p2p) method 
+# or the send_data_to_coordinator or broiadcast (gather) method is used
 
-# other option:
-# choose randomly: data type
-# choose randomly: p2p, star
-# for p2p:
-#   just await, use memo
-# for gather:
-#   chose randomly: sendtoCoord, broadcast
-#   choose randomly: aggregate, await, gather
-# smpc true/false
-# dp true/false
-# withMemo/WithoutMemo
-#np.array([[1, 2, 3], [4, 5, 6]])
 ### VARIABLES
-NUM_EXPERIMENTS = 1000
+NUM_EXPERIMENTS = 1
 TEST_SMPC = True
-TEST_DP = True
+TEST_DP = False
 DEBUG = False
 
 ### CONSTANTS
-DATATYPES = ["string", 1, 1.0, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0]] 
+#DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0]] 
+DATATYPES = [1] 
     # CAREFUL CHANGING DATATYPES, it is expected that only index 0 and 3 contain
     # strings, as strings are incompatable with aggregate and smpc
-COM_METHODS = ["p2p", "gather"] # DONT CHANGE THIS
-SEND_METHOD = ["broadcast", "send_to_coord"] # DONT CHANGE THIS
-AGG_METHOD = ["aggregate", "await", "gather"] # DONT CHANGE THIS
+#COM_METHODS = ["p2p", "gather"] # DONT CHANGE THIS
+COM_METHODS = ["gather"] # DONT CHANGE THIS
+#SEND_METHOD = ["broadcast", "send_to_coord"] # DONT CHANGE THIS
+SEND_METHOD = ["send_to_coord"] # DONT CHANGE THIS
+#AGG_METHOD = ["aggregate", "await", "gather"] # DONT CHANGE THIS
+AGG_METHOD = ["aggregate"] # DONT CHANGE THIS
 
 
 @app_state('initial')
@@ -69,13 +65,14 @@ class InitialState(AppState):
 
                 #smpc
                 if sendMethod != "broadcast" and TEST_SMPC:
-                    smpc = random.choice([True, False])
+                    smpc = random.choice([True, True]) #TODO: change back
 
                 # redraw data if needed
                 if (comMethod == "gather" and (aggMethod == "aggregate" or smpc == True)) or dp == True:
                     # resample datatype
-                    data = random.sample([val for idx, val in enumerate(DATATYPES) if idx not in [0,3]], k=1)[0]
-
+                    pass
+                    #data = random.sample([val for idx, val in enumerate(DATATYPES) if idx not in [0,3]], k=1)[0]
+                    # TODO: add again
                 if useMemo or comMethod == "p2p":
                     memo = f"EXPERIMENT_NUMBER_{expNumber}"
                 if comMethod == "p2p":
@@ -203,6 +200,11 @@ class InitialState(AppState):
                                                 use_dp=setup["dp"])
                             if setup["dp"]:
                                 print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {awaitData}, should get {setup['data']}")
+                            elif setup["smpc"]:
+                                if compare_objects(_aggregate([setup["data"] for _ in range(len(self.clients))], SMPCOperation.ADD), awaitData):
+                                    print(f"TEST PASSED: {setup}")
+                                else:
+                                    print(f"TEST FAILED: {setup} GOT DATA: {awaitData}, should get {_aggregate([setup['data'] for _ in range(len(self.clients))], SMPCOperation.ADD)}")
                             else:
                                 if compare_objects(awaitData, [setup["data"] for _ in range(len(self.clients))]):
                                     print(f"TEST PASSED: {setup}")
@@ -222,6 +224,12 @@ class InitialState(AppState):
                                                 use_dp=setup["dp"])
                             if setup["dp"]:
                                 print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {gatherData}, should get {setup['data']}")
+                            elif setup["smpc"]:
+                                gatherData = gatherData[0] #unwrap
+                                if compare_objects(_aggregate([setup["data"] for _ in range(len(self.clients))], SMPCOperation.ADD), gatherData):
+                                    print(f"TEST PASSED: {setup}")
+                                else:
+                                    print(f"TEST FAILED: {setup} GOT DATA: {gatherData}, should get {_aggregate([setup['data'] for _ in range(len(self.clients))], SMPCOperation.ADD)}")
                             else:              
                                 if compare_objects(gatherData, [setup["data"] for _ in range(len(self.clients))]):
                                     print(f"TEST PASSED: {setup}")
@@ -317,7 +325,16 @@ class InitialState(AppState):
         return "terminal"
 
 def compare_objects(obj1, obj2):
-    if type(obj1) != type(obj2):
+    if isinstance(obj1, (int, float, np.int64)) and isinstance(obj2, (int, float, np.int64)):
+        return float(obj1) == float(obj2)
+    elif isinstance(obj1, (np.ndarray, list)) and isinstance(obj1, (np.ndarray, list)):
+        for x,y in zip(obj1, obj2):
+            if not compare_objects(x,y):
+                return False
+            else: 
+                return True
+    elif type(obj1) != type(obj2):
+        print(f"FAILING: got types: {type(obj1)} and {type(obj2)}")
         return False
     elif isinstance(obj1, (int, float, str)):
         return obj1 == obj2
