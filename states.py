@@ -23,7 +23,7 @@ TEST_DP = True
 DEBUG = False
 
 ### CONSTANTS
-DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0], np.ndarray([1,2,3])] 
+DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0], np.array([1,2,3])] 
 #DATATYPES = [1] 
     # CAREFUL CHANGING DATATYPES, it is expected that only index 0 and 3 contain
     # strings, as strings are incompatable with aggregate and smpc
