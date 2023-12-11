@@ -17,22 +17,22 @@ import json
 # or the send_data_to_coordinator or broiadcast (gather) method is used
 
 ### VARIABLES
-NUM_EXPERIMENTS = 1
+NUM_EXPERIMENTS = 100
 TEST_SMPC = True
-TEST_DP = False
+TEST_DP = True
 DEBUG = False
 
 ### CONSTANTS
-#DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0]] 
-DATATYPES = [1] 
+DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0], np.ndarray([1,2,3])] 
+#DATATYPES = [1] 
     # CAREFUL CHANGING DATATYPES, it is expected that only index 0 and 3 contain
     # strings, as strings are incompatable with aggregate and smpc
-#COM_METHODS = ["p2p", "gather"] # DONT CHANGE THIS
-COM_METHODS = ["gather"] # DONT CHANGE THIS
-#SEND_METHOD = ["broadcast", "send_to_coord"] # DONT CHANGE THIS
-SEND_METHOD = ["send_to_coord"] # DONT CHANGE THIS
-#AGG_METHOD = ["aggregate", "await", "gather"] # DONT CHANGE THIS
-AGG_METHOD = ["aggregate"] # DONT CHANGE THIS
+COM_METHODS = ["p2p", "gather"] # Specify to only test peer to peer or gather schemes
+#COM_METHODS = ["gather"] 
+SEND_METHOD = ["broadcast", "send_to_coord"] # specify the sending mode to test
+#SEND_METHOD = ["send_to_coord"]
+AGG_METHOD = ["aggregate", "await", "gather"] # specify the gathering function to test
+#AGG_METHOD = ["aggregate"] 
 
 
 @app_state('initial')
@@ -65,14 +65,12 @@ class InitialState(AppState):
 
                 #smpc
                 if sendMethod != "broadcast" and TEST_SMPC:
-                    smpc = random.choice([True, True]) #TODO: change back
+                    smpc = random.choice([True, False])
 
                 # redraw data if needed
                 if (comMethod == "gather" and (aggMethod == "aggregate" or smpc == True)) or dp == True:
                     # resample datatype
-                    pass
-                    #data = random.sample([val for idx, val in enumerate(DATATYPES) if idx not in [0,3]], k=1)[0]
-                    # TODO: add again
+                    data = random.sample([val for idx, val in enumerate(DATATYPES) if idx not in [0,3]], k=1)[0]
                 if useMemo or comMethod == "p2p":
                     memo = f"EXPERIMENT_NUMBER_{expNumber}"
                 if comMethod == "p2p":
