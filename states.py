@@ -19,7 +19,7 @@ from copy import deepcopy
 
 ### VARIABLES
 NUM_EXPERIMENTS = 100
-TEST_SMPC_WEIGHTS = [1, 0] # weights with which to choose from [TRUE, FALSE]
+TEST_SMPC_WEIGHTS = [0.5, 0.5] # weights with which to choose from [TRUE, FALSE]
 TEST_DP_WEIGHTS = [0.5, 0.5] # weights with which to choose from [TRUE, FALSE]
 DEBUG = False
 
@@ -43,7 +43,7 @@ AGG_METHOD_WEIGHTS = [0.33, 0.33, 0.34] # the weight with which to choose random
                                         # from AGG_METHOD
 #AGG_METHOD = ["aggregate"] 
 SMPC_OPERATION = [SMPCOperation.ADD, SMPCOperation.MULTIPLY]
-SMPC_OPERATION_WEIGHTS = [0, 1] # the weight with which to choose randomly
+SMPC_OPERATION_WEIGHTS = [0.5, 0.5] # the weight with which to choose randomly
                                     # from SMPC_OPERATION
 
 
