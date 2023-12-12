@@ -2,6 +2,7 @@ from FeatureCloud.app.engine.app import AppState, app_state, _aggregate, SMPCOpe
 import random
 import numpy as np
 import json
+from copy import deepcopy
 
 # This app does a random order of random communication methods in featurecloud
 # and tests if the communication method worked
@@ -18,21 +19,32 @@ import json
 
 ### VARIABLES
 NUM_EXPERIMENTS = 100
-TEST_SMPC = True
-TEST_DP = True
+TEST_SMPC_WEIGHTS = [1, 0] # weights with which to choose from [TRUE, FALSE]
+TEST_DP_WEIGHTS = [0.5, 0.5] # weights with which to choose from [TRUE, FALSE]
 DEBUG = False
 
 ### CONSTANTS
-DATATYPES = ["string", 1, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0], np.array([1,2,3])] 
+DATATYPES = ["string", 2, 1.5, {'key1': 'value1', 'key2': 'value2'}, [1,2,3.0], np.array([1,2,3]), {"val1": 1, "val2": 5.0, "val3": [1, 3.7], "val4": np.array([1,2.1,3])}] 
+NON_SMPC_DATA = [0, 3] # indexes of data in DATATYPES which does not work with SMPC (e.g. strings)
+NON_DP_DATA = [0, 3] # indexes of data in DATATYPES which does not work with DP (e.g. strings)
+NON_AGGREGATE_DATA = [0, 3, 6] # indexes of data in DATATYPES which does not work with aggregate (e.g. strings)
+DATATYPES_WEIGHTS = [0.17, 0.17, 0.17, 0.17, 0.17, 0.17, 0.17] 
 #DATATYPES = [1] 
     # CAREFUL CHANGING DATATYPES, it is expected that only index 0 and 3 contain
     # strings, as strings are incompatable with aggregate and smpc
 COM_METHODS = ["p2p", "gather"] # Specify to only test peer to peer or gather schemes
-#COM_METHODS = ["gather"] 
+COM_METHODS_WEIGHTS = [0.3, 0.7] # the weight with which to choose randomly
+                                 # from COM_METHODS
 SEND_METHOD = ["broadcast", "send_to_coord"] # specify the sending mode to test
-#SEND_METHOD = ["send_to_coord"]
+SEND_METHOD_WEIGHTS = [0.5, 0.5]  # the weight with which to choose randomly
+                                  # from COM_METHODS
 AGG_METHOD = ["aggregate", "await", "gather"] # specify the gathering function to test
+AGG_METHOD_WEIGHTS = [0.33, 0.33, 0.34] # the weight with which to choose randomly
+                                        # from AGG_METHOD
 #AGG_METHOD = ["aggregate"] 
+SMPC_OPERATION = [SMPCOperation.ADD, SMPCOperation.MULTIPLY]
+SMPC_OPERATION_WEIGHTS = [0, 1] # the weight with which to choose randomly
+                                    # from SMPC_OPERATION
 
 
 @app_state('initial')
@@ -49,28 +61,38 @@ class InitialState(AppState):
             experiments = []
             for expNumber in range(NUM_EXPERIMENTS):
                 # define all relevant variables
-                data = random.sample(DATATYPES, k=1)[0]
                 comMethod = random.sample(COM_METHODS, k = 1)[0]
                 useMemo = random.choice([True, False])
                 memo = None
                 smpc = False
                 dp = False
-                sendMethod = random.sample(SEND_METHOD, k=1)[0]
-                aggMethod = random.sample(AGG_METHOD, k=1)[0]
+                sendMethod = random.choices(population=SEND_METHOD, weights=SEND_METHOD_WEIGHTS, k=1)[0]
+                aggMethod = random.choices(population=AGG_METHOD, weights=AGG_METHOD_WEIGHTS, k=1)[0]
+                smpcOperation = random.choices(population=SMPC_OPERATION, weights= SMPC_OPERATION_WEIGHTS, k=1)[0]
                 
                 # ensure that they are set correctly
                 #dp
-                if TEST_DP:
-                    dp = random.choice([True, False])
+                dp = random.choices(population=[True, False], weights=TEST_DP_WEIGHTS ,k=1)[0]
 
                 #smpc
-                if sendMethod != "broadcast" and TEST_SMPC:
-                    smpc = random.choice([True, False])
+                if sendMethod != "broadcast":
+                    smpc = random.choices(population=[True, False], weights=TEST_SMPC_WEIGHTS, k=1)[0]
 
-                # redraw data if needed
-                if (comMethod == "gather" and (aggMethod == "aggregate" or smpc == True)) or dp == True:
-                    # resample datatype
-                    data = random.sample([val for idx, val in enumerate(DATATYPES) if idx not in [0,3]], k=1)[0]
+                # filter which datatypes are possible and select from those
+                specificRemoveIdxs = set()
+                if comMethod == "gather" and aggMethod == "aggregate":
+                    for idx in NON_AGGREGATE_DATA:
+                        specificRemoveIdxs.add(idx)
+                if comMethod == "gather" and smpc:
+                    for idx in NON_SMPC_DATA:
+                        specificRemoveIdxs.add(idx)
+                if dp:
+                    for idx in NON_DP_DATA:
+                        specificRemoveIdxs.add(idx)
+                data = random.choices(population=[val for idx, val in enumerate(DATATYPES) if idx not in specificRemoveIdxs],
+                                      weights=[val for idx, val in enumerate(DATATYPES_WEIGHTS) if idx not in specificRemoveIdxs],
+                                      k=1)[0]
+
                 if useMemo or comMethod == "p2p":
                     memo = f"EXPERIMENT_NUMBER_{expNumber}"
                 if comMethod == "p2p":
@@ -87,6 +109,7 @@ class InitialState(AppState):
                                         "send_method": sendMethod,
                                         "agg_method": aggMethod,
                                         "smpc": smpc,
+                                        "smpc_operation": smpcOperation,
                                         "dp": dp,
                                         "memo": memo})
                 else:
@@ -133,6 +156,7 @@ class InitialState(AppState):
                                 print(f"TEST PASSED: {setup}")
                             else:
                                 print(f"TEST FAILED: {setup} GOT DATA: {receivedData}, should get {setup['data']}")
+                # gather (all except p2p)
                 elif setup["com_method"] == "gather":
                     # gather as coordinator
                     if setup["send_method"] == "broadcast":
@@ -152,6 +176,8 @@ class InitialState(AppState):
                         # first send, then use agg_method
                         if DEBUG:
                             print(f"SENDING GATHER: {setup}")
+                        if setup["smpc"]:
+                            self.configure_smpc(operation = setup["smpc_operation"])
                         if setup["memo"]:
                             self.send_data_to_coordinator(setup["data"],
                                                     send_to_self=True, 
@@ -163,80 +189,76 @@ class InitialState(AppState):
                                                     send_to_self=True, 
                                                     use_smpc=setup["smpc"],
                                                     use_dp=setup["dp"])
+                            
                         # now use the aggregation method
+                        actualData = None
+                        shouldData = None
                         if setup["agg_method"] == "aggregate":
                             if DEBUG:
                                 print(f"RECEVING AGGREGATE: {setup}")
                             if setup["memo"]:
-                                aggData = self.aggregate_data(
+                                actualData = self.aggregate_data(
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"],
                                                 memo=setup["memo"])
                             else:
-                                aggData = self.aggregate_data(
+                                actualData = self.aggregate_data(
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"])
-                                
-                            if setup["dp"]:
-                                print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {aggData}, should get {setup['data']}")
-                            else:
-                                if compare_objects(_aggregate([setup["data"] for _ in range(len(self.clients))], SMPCOperation.ADD), aggData):
-                                    print(f"TEST PASSED: {setup}")
-                                else:
-                                    print(f"TEST FAILED: {setup} GOT DATA: {aggData}, should get {_aggregate([setup['data'] for _ in range(len(self.clients))], SMPCOperation.ADD)}")
+
                         elif setup["agg_method"] == "await":
                             if DEBUG:
                                 print(f"RECEVING AWAIT: {setup}")
                             if setup["memo"]:
-                                awaitData = self.await_data(n=len(self.clients),
+                                actualData = self.await_data(n=len(self.clients),
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"],
                                                 memo=setup["memo"])
                             else:
-                                awaitData = self.await_data(n=len(self.clients),
+                                actualData = self.await_data(n=len(self.clients),
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"])
-                            if setup["dp"]:
-                                print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {awaitData}, should get {setup['data']}")
-                            elif setup["smpc"]:
-                                if compare_objects(_aggregate([setup["data"] for _ in range(len(self.clients))], SMPCOperation.ADD), awaitData):
-                                    print(f"TEST PASSED: {setup}")
-                                else:
-                                    print(f"TEST FAILED: {setup} GOT DATA: {awaitData}, should get {_aggregate([setup['data'] for _ in range(len(self.clients))], SMPCOperation.ADD)}")
-                            else:
-                                if compare_objects(awaitData, [setup["data"] for _ in range(len(self.clients))]):
-                                    print(f"TEST PASSED: {setup}")
-                                else:
-                                    print(f"TEST FAILED: {setup} GOT DATA: {awaitData}, should get {setup['data']}")
+
                         elif setup["agg_method"] == "gather":
                             if DEBUG:
                                 print(f"RECEVING GATHER: {setup}")
                             if setup["memo"]:
-                                gatherData = self.gather_data(
+                                actualData = self.gather_data(
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"],
                                                 memo=setup["memo"])
                             else:
-                                gatherData = self.gather_data(
+                                actualData = self.gather_data(
                                                 use_smpc=setup["smpc"],
                                                 use_dp=setup["dp"])
-                            if setup["dp"]:
-                                print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {gatherData}, should get {setup['data']}")
-                            elif setup["smpc"]:
-                                gatherData = gatherData[0] #unwrap
-                                if compare_objects(_aggregate([setup["data"] for _ in range(len(self.clients))], SMPCOperation.ADD), gatherData):
-                                    print(f"TEST PASSED: {setup}")
-                                else:
-                                    print(f"TEST FAILED: {setup} GOT DATA: {gatherData}, should get {_aggregate([setup['data'] for _ in range(len(self.clients))], SMPCOperation.ADD)}")
-                            else:              
-                                if compare_objects(gatherData, [setup["data"] for _ in range(len(self.clients))]):
-                                    print(f"TEST PASSED: {setup}")
-                                else:
-                                    print(f"TEST FAILED: {setup} GOT DATA: {gatherData}, should get {setup['data']}")
                         else:
                             print("comMethod not implemented")
                             raise NotImplementedError
- 
+                        # evaluate the test
+                        if setup["dp"]:
+                            print(f"TEST RESULT UNKNOWN (DP){setup}: GOT {actualData}, should get {setup['data']}")
+                        elif setup["smpc"] or setup["agg_method"] == "aggregate":
+                            try:
+                                shouldData = _aggregate([setup["data"] for _ in range(len(self.clients))], setup["smpc_operation"])
+                            except:
+                                shouldData = None
+                                print(f"TEST RESULTS UNKNOWN (CANT AGGREGATE): {setup}, GOT {actualData}, WANT {setup['data']}")
+                            if setup["agg_method"] == "gather":
+                                actualData = actualData[0] # unwrap the data
+                            if setup["smpc_operation"].value == SMPCOperation.MULTIPLY.value:
+                                print(f"TEST RESULTS UNKNOWN (Multiply SMPC produces noise): {setup}, GOT {actualData}, WANT {setup['data']}")
+                            else:
+                                if compare_objects(shouldData, actualData):
+                                    print(f"TEST PASSED: {setup}")
+                                else:
+                                    print(f"TEST FAILED: {setup} GOT DATA: {actualData}, should get {shouldData}")
+                        else:
+                            # gather or await     
+                            shouldData = [setup["data"] for _ in range(len(self.clients))]         
+                            if compare_objects(actualData, shouldData):
+                                print(f"TEST PASSED: {setup}")
+                            else:
+                                print(f"TEST FAILED: {setup} GOT DATA: {actualData}, should get {shouldData}")
                 else:
                     print("comMethod not implemented")
                     raise NotImplementedError
@@ -281,6 +303,7 @@ class InitialState(AppState):
                             else:
                                 print(f"TEST FAILED: {setup} GOT DATA: {receivedData}, should get {setup['data']}")
                 
+                # gather (all except p2p)
                 elif setup["com_method"] == "gather":
                     # gather as client
                     if setup["send_method"] == "broadcast":
@@ -306,6 +329,8 @@ class InitialState(AppState):
                         # just send, aggregation and test done by coordinator
                         if DEBUG:
                             print(f"SENDING GATHER: {setup}")
+                        if setup["smpc"]:
+                            self.configure_smpc(operation = setup["smpc_operation"])
                         if setup["memo"]:
                             self.send_data_to_coordinator(setup["data"],
                                                     use_smpc=setup["smpc"],
@@ -325,7 +350,7 @@ class InitialState(AppState):
 def compare_objects(obj1, obj2):
     if isinstance(obj1, (int, float, np.int64)) and isinstance(obj2, (int, float, np.int64)):
         return float(obj1) == float(obj2)
-    elif isinstance(obj1, (np.ndarray, list)) and isinstance(obj1, (np.ndarray, list)):
+    elif isinstance(obj1, (np.ndarray, list)) and isinstance(obj2, (np.ndarray, list)):
         for x,y in zip(obj1, obj2):
             if not compare_objects(x,y):
                 return False
@@ -337,7 +362,7 @@ def compare_objects(obj1, obj2):
     elif isinstance(obj1, (int, float, str)):
         return obj1 == obj2
     elif isinstance(obj1, dict):
-        return json.dumps(obj1, sort_keys=True) == json.dumps(obj2, sort_keys=True)
+        return json.dumps(obj1, sort_keys=True, cls=_NumpyArrayEncoder) == json.dumps(obj2, sort_keys=True, cls=_NumpyArrayEncoder)
     elif isinstance(obj1, np.ndarray):
         return np.array_equal(obj1, obj2)
     elif isinstance(obj1, list):
@@ -349,3 +374,14 @@ def compare_objects(obj1, obj2):
     else:
         return obj1 == obj2
     
+class _NumpyArrayEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            # call default Encoder in other cases
+            return json.JSONEncoder.default(self, obj)
